@@ -1,5 +1,6 @@
 import argparse
 import logging
+import os
 import signal
 import sys
 import threading
@@ -31,7 +32,14 @@ def main():
     config = load_config(args.config)
     logger.info("Loaded config with %d targets", len(config.targets))
 
-    sentry_sdk.init(dsn=config.sentry_dsn, enable_logs=True)
+    sentry_sdk.init(
+        dsn=config.sentry_dsn,
+        environment=os.environ.get("SENTRY_ENVIRONMENT", "production"),
+        release=f"log-sentinel@{__import__('log_sentinel').__version__}",
+        enable_logs=True,
+        send_default_pii=False,
+        attach_stacktrace=True,
+    )
 
     tailer = Tailer(config.state_file)
     if not args.backfill:

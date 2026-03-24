@@ -1,39 +1,23 @@
 import hashlib
-import logging
 import socket
 import time
 from collections import defaultdict, deque
 
 import sentry_sdk
-from sentry_sdk.integrations.logging import LoggingIntegration
 
 from .parsers.base import LogEntry
 
 SEVERITY_ORDER = {"debug": 0, "info": 1, "warning": 2, "error": 3}
-
-# Map our severity names to Python logging levels (used by sentry_sdk.logger)
-_PY_LEVELS = {
-    "debug":   logging.DEBUG,
-    "info":    logging.INFO,
-    "warning": logging.WARNING,
-    "error":   logging.ERROR,
-}
-
-# sentry_sdk.logger methods by severity
-_SENTRY_LOG_FN = {
-    "debug":   sentry_sdk.logger.debug,
-    "info":    sentry_sdk.logger.info,
-    "warning": sentry_sdk.logger.warning,
-    "error":   sentry_sdk.logger.error,
-}
+SENTRY_LEVELS = {"error": "error", "warning": "warning", "info": "info", "debug": "debug"}
 
 
 class SentrySender:
     def __init__(self, dedup_window: int, breadcrumb_limit: int):
         self._dedup_window = dedup_window
-        self._breadcrumb_limit = breadcrumb_limit  # kept for compat, unused with logs API
+        self._breadcrumb_limit = breadcrumb_limit
         self._dedup_cache: dict[str, float] = {}
         self._dedup_counts: dict[str, int] = {}
+        self._breadcrumbs: dict[str, deque] = defaultdict(deque)
         self._hostname = socket.gethostname()
         self.metrics = {
             "lines_processed": 0,
@@ -50,7 +34,12 @@ class SentrySender:
         if entry_level < min_level:
             return
 
-        # Dedup check (still useful to avoid log spam)
+        # Info/debug → breadcrumb, not an event
+        if entry.severity in ("info", "debug"):
+            self._add_breadcrumb(entry)
+            return
+
+        # Dedup check
         fingerprint = self._fingerprint(entry)
         now = time.monotonic()
         self._expire_dedup(now)
@@ -62,24 +51,29 @@ class SentrySender:
         self._dedup_cache[fingerprint] = now
         suppressed_count = self._dedup_counts.pop(fingerprint, 0)
 
-        # Build structured attributes for Sentry Logs
-        attributes = {
+        # Flush breadcrumbs for this source before sending event
+        self._flush_breadcrumbs(entry.source_file)
+
+        all_tags = {
             "log.source": entry.source_file,
             "log.parser": parser_name,
             "log.host": self._hostname,
             **tags,
         }
-        if entry.extra_fields:
-            attributes.update({f"http.{k}": v for k, v in entry.extra_fields.items()})
-        if suppressed_count > 0:
-            attributes["duplicate_count"] = suppressed_count
-
-        log_fn = _SENTRY_LOG_FN.get(entry.severity, sentry_sdk.logger.error)
 
         with sentry_sdk.new_scope() as scope:
-            scope.set_extra("_log_attributes", attributes)
-            log_fn(entry.message, **{k: v for k, v in attributes.items()
-                                     if isinstance(v, (str, int, float, bool))})
+            for k, v in all_tags.items():
+                scope.set_tag(k, v)
+            context = dict(entry.extra_fields) if entry.extra_fields else {}
+            if suppressed_count > 0:
+                context["duplicate_count"] = suppressed_count
+            if context:
+                scope.set_context("log_entry", context)
+
+            sentry_sdk.capture_message(
+                entry.message,
+                level=SENTRY_LEVELS.get(entry.severity, "error"),
+            )
 
         self.metrics["events_sent"] += 1
 
@@ -91,3 +85,28 @@ class SentrySender:
         expired = [k for k, t in self._dedup_cache.items() if now - t > self._dedup_window]
         for k in expired:
             del self._dedup_cache[k]
+
+    def _add_breadcrumb(self, entry: LogEntry):
+        bc = {
+            "message": entry.message,
+            "level": entry.severity,
+            "timestamp": entry.timestamp.isoformat(),
+            "data": entry.extra_fields,
+        }
+        buf = self._breadcrumbs[entry.source_file]
+        buf.append(bc)
+        while len(buf) > self._breadcrumb_limit:
+            buf.popleft()
+
+    def _flush_breadcrumbs(self, source_file: str):
+        buf = self._breadcrumbs.get(source_file)
+        if not buf:
+            return
+        for bc in buf:
+            sentry_sdk.add_breadcrumb(
+                message=bc["message"],
+                level=bc["level"],
+                timestamp=bc["timestamp"],
+                data=bc.get("data"),
+            )
+        buf.clear()
