@@ -1,0 +1,33 @@
+# Log Sentinel configuration
+# sentry_dsn can also be set via SENTRY_DSN env var
+sentry_dsn: "https://your-key@sentry.io/your-project-id"
+
+defaults:
+  min_severity: warning
+  polling: false
+
+targets:
+  - path: "/var/log/syslog"
+    parser: syslog
+    min_severity: error
+    tags:
+      source: system
+
+  - path: "/var/log/nginx/*.log"
+    parser: clf
+    min_severity: warning
+    tags:
+      service: nginx
+
+  - path: "/opt/app/logs/**/*.json"
+    parser: json
+    min_severity: info
+    multiline_pattern: "^\\{"
+    tags:
+      service: myapp
+
+state_file: "~/.log-sentinel/state.json"
+glob_rescan_interval: 30
+dedup_window: 60
+breadcrumb_limit: 100
+health_check_port: 8099
