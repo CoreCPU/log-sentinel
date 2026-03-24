@@ -102,3 +102,36 @@ class TestSyslogParser:
     def test_non_syslog_returns_none(self):
         entry = self.parser.parse('{"level": "info"}', "/var/log/syslog")
         assert entry is None
+
+
+from log_sentinel.parsers.clf_parser import ClfParser
+
+
+class TestClfParser:
+    def setup_method(self):
+        self.parser = ClfParser()
+
+    def test_common_log_format(self):
+        line = '10.0.0.1 - frank [23/Mar/2026:12:00:00 +0000] "GET /index.html HTTP/1.1" 200 1234'
+        entry = self.parser.parse(line, "/var/log/nginx/access.log")
+        assert entry is not None
+        assert entry.severity == "info"
+        assert "GET /index.html" in entry.message
+        assert entry.extra_fields["status"] == 200
+        assert entry.extra_fields["remote_host"] == "10.0.0.1"
+
+    def test_5xx_is_error(self):
+        line = '10.0.0.1 - - [23/Mar/2026:12:00:00 +0000] "POST /api HTTP/1.1" 500 0'
+        entry = self.parser.parse(line, "/var/log/nginx/access.log")
+        assert entry is not None
+        assert entry.severity == "error"
+
+    def test_4xx_is_warning(self):
+        line = '10.0.0.1 - - [23/Mar/2026:12:00:00 +0000] "GET /missing HTTP/1.1" 404 0'
+        entry = self.parser.parse(line, "/var/log/nginx/access.log")
+        assert entry is not None
+        assert entry.severity == "warning"
+
+    def test_non_clf_returns_none(self):
+        entry = self.parser.parse("just some random text", "/var/log/nginx/access.log")
+        assert entry is None
