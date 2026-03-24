@@ -177,3 +177,44 @@ class TestFallbackParser:
     def test_always_returns_entry(self):
         entry = self.parser.parse("", "/var/log/app.log")
         assert entry is not None
+
+
+from log_sentinel.parsers import build_parser_chain, parse_line
+
+
+class TestParserChain:
+    def test_json_detected_first(self):
+        entry = parse_line('{"level": "error", "message": "boom"}', "/app.log")
+        assert entry is not None
+        assert entry.severity == "error"
+        assert entry.message == "boom"
+
+    def test_syslog_detected(self):
+        entry = parse_line(
+            "Mar 23 12:00:00 web1 nginx[99]: started",
+            "/var/log/syslog",
+        )
+        assert entry is not None
+        assert entry.extra_fields.get("program") == "nginx"
+
+    def test_clf_detected(self):
+        entry = parse_line(
+            '10.0.0.1 - - [23/Mar/2026:12:00:00 +0000] "GET / HTTP/1.1" 200 0',
+            "/var/log/access.log",
+        )
+        assert entry is not None
+        assert entry.extra_fields.get("status") == 200
+
+    def test_fallback_catches_all(self):
+        entry = parse_line("some random log text", "/var/log/app.log")
+        assert entry is not None
+        assert entry.severity == "info"
+
+    def test_parser_hint_skips_chain(self):
+        chain = build_parser_chain(parser_hint="clf")
+        entry = None
+        for parser in chain:
+            entry = parser.parse('{"level":"error"}', "/app.log")
+            if entry is not None:
+                break
+        assert entry is not None
