@@ -135,3 +135,45 @@ class TestClfParser:
     def test_non_clf_returns_none(self):
         entry = self.parser.parse("just some random text", "/var/log/nginx/access.log")
         assert entry is None
+
+
+from log_sentinel.parsers.fallback_parser import FallbackParser
+
+
+class TestFallbackParser:
+    def setup_method(self):
+        self.parser = FallbackParser()
+
+    def test_error_keyword(self):
+        entry = self.parser.parse("2026-03-23 ERROR: connection refused", "/var/log/app.log")
+        assert entry is not None
+        assert entry.severity == "error"
+
+    def test_fatal_keyword(self):
+        entry = self.parser.parse("FATAL: out of memory", "/var/log/app.log")
+        assert entry is not None
+        assert entry.severity == "error"
+
+    def test_warning_keyword(self):
+        entry = self.parser.parse("WARN: disk usage at 90%", "/var/log/app.log")
+        assert entry is not None
+        assert entry.severity == "warning"
+
+    def test_exception_keyword(self):
+        entry = self.parser.parse("Exception in thread main", "/var/log/app.log")
+        assert entry is not None
+        assert entry.severity == "error"
+
+    def test_traceback_keyword(self):
+        entry = self.parser.parse("Traceback (most recent call last):", "/var/log/app.log")
+        assert entry is not None
+        assert entry.severity == "error"
+
+    def test_no_keyword_is_info(self):
+        entry = self.parser.parse("server started on port 8080", "/var/log/app.log")
+        assert entry is not None
+        assert entry.severity == "info"
+
+    def test_always_returns_entry(self):
+        entry = self.parser.parse("", "/var/log/app.log")
+        assert entry is not None
