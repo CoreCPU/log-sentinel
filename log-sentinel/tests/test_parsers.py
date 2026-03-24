@@ -69,3 +69,36 @@ class TestJsonParser:
         entry = self.parser.parse(line, "/var/log/app.json")
         assert entry is not None
         assert entry.timestamp is not None
+
+
+from log_sentinel.parsers.syslog_parser import SyslogParser
+
+
+class TestSyslogParser:
+    def setup_method(self):
+        self.parser = SyslogParser()
+
+    def test_rfc3164_format(self):
+        line = "Mar 23 12:00:00 webserver sshd[1234]: Failed password for root from 10.0.0.1"
+        entry = self.parser.parse(line, "/var/log/syslog")
+        assert entry is not None
+        assert entry.message == "Failed password for root from 10.0.0.1"
+        assert entry.extra_fields["hostname"] == "webserver"
+        assert entry.extra_fields["program"] == "sshd"
+        assert entry.extra_fields["pid"] == "1234"
+
+    def test_rfc3164_error_keyword(self):
+        line = "Mar 23 12:00:00 db1 postgres[5678]: ERROR: relation does not exist"
+        entry = self.parser.parse(line, "/var/log/syslog")
+        assert entry is not None
+        assert entry.severity == "error"
+
+    def test_rfc3164_info_default(self):
+        line = "Mar 23 12:00:00 web1 nginx[99]: started worker process"
+        entry = self.parser.parse(line, "/var/log/syslog")
+        assert entry is not None
+        assert entry.severity == "info"
+
+    def test_non_syslog_returns_none(self):
+        entry = self.parser.parse('{"level": "info"}', "/var/log/syslog")
+        assert entry is None
