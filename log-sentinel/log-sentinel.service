@@ -1,0 +1,21 @@
+[Unit]
+Description=Log Sentinel — log file to Sentry forwarder
+After=network.target
+
+[Service]
+Type=simple
+User=log-sentinel
+Group=log-sentinel
+ExecStart=/opt/log-sentinel/venv/bin/python -m log_sentinel -c /etc/log-sentinel/config.yaml
+Restart=on-failure
+RestartSec=5
+StandardError=journal
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadOnlyPaths=/var/log
+ReadWritePaths=/home/log-sentinel/.log-sentinel
+
+[Install]
+WantedBy=multi-user.target
