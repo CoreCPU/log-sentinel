@@ -31,7 +31,7 @@ def main():
     config = load_config(args.config)
     logger.info("Loaded config with %d targets", len(config.targets))
 
-    sentry_sdk.init(dsn=config.sentry_dsn)
+    sentry_sdk.init(dsn=config.sentry_dsn, enable_logs=True)
 
     tailer = Tailer(config.state_file)
     if not args.backfill:
