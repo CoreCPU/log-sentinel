@@ -55,36 +55,34 @@ class Tailer:
             return []
 
         inode = stat.st_ino
-        ctime = stat.st_ctime_ns
         size = stat.st_size
 
         # On corrupt state recovery, skip to EOF for unknown files
         if self._corrupt_recovery and path not in self._positions:
-            self._positions[path] = {"inode": inode, "ctime": ctime, "offset": size}
+            self._positions[path] = {"inode": inode, "offset": size}
             return []
 
         # Skip to EOF for first-time files when not in backfill mode
         if self.skip_to_eof and path not in self._positions:
-            self._positions[path] = {"inode": inode, "ctime": ctime, "offset": size}
+            self._positions[path] = {"inode": inode, "offset": size}
             return []
 
         prev = self._positions.get(path, {})
         prev_inode = prev.get("inode")
-        prev_ctime = prev.get("ctime")
         prev_offset = prev.get("offset", 0)
         prev_fingerprint = prev.get("fingerprint")
 
-        # Detect rotation (inode change, ctime change, or truncation)
-        rotated = prev_inode != inode or prev_ctime != ctime or size < prev_offset
-        if not rotated and prev_fingerprint is not None and prev_offset > 0:
-            # inode/ctime can be reused on rapid rotation; verify file start
+        # Detect rotation: inode change or file shrunk (truncation)
+        rotated = prev_inode != inode or size < prev_offset
+
+        # Fingerprint check: even if inode matches, verify file start hasn't changed
+        # (Linux can reuse inodes on rapid delete+recreate)
+        prev_fp_len = prev.get("fp_len", 0)
+        if not rotated and prev_fingerprint is not None and prev_offset > 0 and prev_fp_len > 0:
             try:
                 with open(path, "rb") as f:
-                    head_bytes = f.read(64)
-                # Compare only as many bytes as were originally stored
-                stored_bytes = len(prev_fingerprint) // 2
-                current_head = head_bytes[:stored_bytes].hex()
-                if current_head != prev_fingerprint:
+                    head = f.read(prev_fp_len)
+                if head.hex() != prev_fingerprint:
                     rotated = True
             except OSError:
                 pass
@@ -95,12 +93,13 @@ class Tailer:
         if prev_offset >= size:
             return []
 
-        fingerprint: str | None = None
+        fp_size = min(64, size)
+        fingerprint = None
         try:
             with open(path, "rb") as fb:
-                if prev_offset == 0:
-                    head = fb.read(64)
-                    fingerprint = head.hex()
+                # Capture fingerprint on fresh reads (offset 0)
+                if prev_offset == 0 and fp_size > 0:
+                    fingerprint = fb.read(fp_size).hex()
                 fb.seek(prev_offset)
                 raw_bytes = fb.read()
                 new_offset = fb.tell()
@@ -109,11 +108,13 @@ class Tailer:
 
         raw = raw_bytes.decode("utf-8", errors="replace")
 
-        entry: dict = {"inode": inode, "ctime": ctime, "offset": new_offset}
+        entry: dict = {"inode": inode, "offset": new_offset}
         if fingerprint is not None:
             entry["fingerprint"] = fingerprint
+            entry["fp_len"] = fp_size
         elif prev_fingerprint is not None:
             entry["fingerprint"] = prev_fingerprint
+            entry["fp_len"] = prev_fp_len
         self._positions[path] = entry
 
         raw_lines = raw.splitlines()
