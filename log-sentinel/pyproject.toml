@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "log-sentinel"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "watchdog>=3.0",
+    "sentry-sdk>=1.40",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
